@@ -147,7 +147,7 @@ echo "128" > /sys/class/hwmon/hwmon1/pwm3   # half brightness
 Client script: `scripts/nas_lcd.py` — connects to the LCDd daemon (TCP 127.0.0.1:13666). Shows:
 
 - **Base mode** (default, returns after 4 s without input):
-  - L1: `192.168.100.204 45C` (IP + CPU core temp)
+  - L1: `<ip> 45C` (IP + CPU core temp)
   - L2: `[####......]  5%` (10-char bar + root disk usage)
 - **UP button** (front panel) → **RAM mode**: `RAM 45%` + RAM bar (from `/proc/meminfo`)
 - **DOWN button** → **FAN mode**: `FAN 1636` + `LOAD 0.16` (fan2 rpm + loadavg)
@@ -217,7 +217,7 @@ The UP/DOWN buttons of the front panel are read via the Nuvoton NCT6775 GPIO (th
 - Setters use dashes: `client_set -name X`, `screen_set dash -priority alert`.
 - Text widgets: `widget_add dash <id> string` ; `widget_set dash <id> <col> <row> <text>`.
 - ⚠️ The widget **text must not contain spaces** (`Wrong number of arguments`, even with quotes). The "clear" text must not be empty (`widget_set ... 13 2` → error) nor a space; use a character like `.` or `_`.
-- `tmp` (right column of L1) goes on **col 14** if the IP is 12 chars long (192.168.100.204), to avoid clipping.
+- `tmp` (right column of L1) goes on **col 14** if the IP is 12 chars long, to avoid clipping.
 - The right column (13–16) fits **≤4 chars**, otherwise it gets cut beyond the 16-column row.
 - `screen_del dash` and closing the socket clean up on disconnect; there is no `client_del`.
 
