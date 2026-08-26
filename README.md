@@ -13,10 +13,12 @@ Setup guide and tooling to turn a WD Sentinel DX4000 into a Debian server with a
 
 ## Dashboard (nas_lcd.py)
 
-A single LCDd screen `dash` with 2 string widgets (`hd`/`hd2`) — this is more stable than 2 priority-switched screens (those froze the HD44780 module).
+A single LCDd screen `dash` — mixing 2 priority-switched screens froze the HD44780 module, so everything lives in one screen.
 
-- **Screens** (navigated with the panel arrows): `all` (bay grid + usage %), `up` (uptime), `fan` (RPM/LOAD), `ip`, `ram`
-- **CGRAM**: 1..5 = bay disks, 6 = system SSD, 7 = degree symbol. Barrel level 0..7, -1 = missing
+- **Screens** (navigated with the panel arrows): `all` (storage overview), `up` (uptime), `fan` (RPM/LOAD), `ip`, `ram`
+- **First view** (`all`): `STO [██████_] 87%` — aggregate storage bar of all mounted disks + used/total in TB (`00.0/00.4 TB`) on the second line
+- **Low free space**: when any disk drops below 30 % free, the second line switches to the top-2 warnings: `sda:87% sdb:92%`
+- **Bar rendering**: 7 cells — `_` (empty), half-block and full-block CGRAM glyphs (set once at startup via `set_char`; no per-update CGRAM writes, which kept the HD44780 stable)
 - **Hardware interaction**: requires LCDd patched with `set_char`
 
 Requires a patched LCDd 0.5.9 with the `set_char` command.
@@ -142,13 +144,14 @@ echo "128" > /sys/class/hwmon/hwmon1/pwm3   # half brightness
 
 ## 6. Showing stats on the LCD
 
-### NAS dashboard (16x2, IP + CPU temp / disk bar, 3 modes + buttons)
+### NAS dashboard (16x2, storage overview + buttons)
 
 Client script: `scripts/nas_lcd.py` — connects to the LCDd daemon (TCP 127.0.0.1:13666). Shows:
 
 - **Base mode** (default, returns after 4 s without input):
-  - L1: `<ip> 45C` (IP + CPU core temp)
-  - L2: `[####......]  5%` (10-char bar + root disk usage)
+  - L1: `STO [█████▌_] 87%` — aggregate usage of all mounted disks (7-cell bar: `_` empty, half/full CGRAM blocks)
+  - L2: `00.0/00.4 TB` (used/total)
+- **Low free space**: when a disk is below 30 % free, L2 shows the top-2 warnings: `sda:87% sdb:92%`
 - **UP button** (front panel) → **RAM mode**: `RAM 45%` + RAM bar (from `/proc/meminfo`)
 - **DOWN button** → **FAN mode**: `FAN 1636` + `LOAD 0.16` (fan2 rpm + loadavg)
 
