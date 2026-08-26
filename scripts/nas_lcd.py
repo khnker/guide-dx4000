@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import os
-import re
 import socket
 import subprocess
 import threading
@@ -17,8 +16,7 @@ BTN_LONG = 1.5
 BTN_RELEASE = 0x0C
 BTN_UP = 0x08
 BTN_DOWN = 0x04
-
-N_SLOTS = 6
+WARN_USAGE = 70
 
 mode = "all"
 mode_since = 0
@@ -35,47 +33,6 @@ def get_ip():
         if "." in line:
             return line
     return "???"
-
-
-def get_cpu_temp():
-    out = sh("sensors coretemp-isa-0000 2>/dev/null")
-    m = re.search(r"Core 0:\s+\+?(-?\d+)", out)
-    return int(m.group(1)) if m else 0
-
-
-def slot_dev(n):
-    try:
-        blocks = os.listdir(f"/sys/bus/scsi/devices/{n - 1}:0:0:0/block")
-    except OSError:
-        return None
-    return blocks[0] if blocks else None
-
-
-def get_use(dev):
-    part = dev
-    with open("/proc/partitions") as f:
-        for line in f:
-            cols = line.split()
-            if len(cols) < 4:
-                continue
-            p = cols[-1]
-            if p.startswith(dev) and p != dev:
-                part = p
-                break
-    line = sh(f"df -P /dev/{part}")
-    rows = line.splitlines()
-    if len(rows) < 2 or "/dev" not in line:
-        return None
-    return int(rows[1].split()[4].rstrip("%"))
-
-
-def get_slot_use(n):
-    if n == N_SLOTS:
-        return get_use("sda")
-    dev = slot_dev(n)
-    if dev:
-        return get_use(dev)
-    return None
 
 
 def send(sock, cmd):
@@ -154,6 +111,22 @@ def btn_thread():
             time.sleep(1)
 
 
+def get_storage_overview():
+    tot = used = 0
+    warns = []
+    for line in sh("df -P -x tmpfs -x devtmpfs").splitlines()[1:]:
+        fs, blocks, u, avail, cap = line.split()[:5]
+        if not fs.startswith("/dev/sd"):
+            continue
+        pct = int(cap.rstrip("%"))
+        tot += int(blocks)
+        used += int(u)
+        if pct > WARN_USAGE:
+            warns.append(f"{fs[5:].rstrip('0123456789')}:{pct}%")
+    ov = (used * 100 + tot // 2) // tot if tot else 0
+    return ov, used, tot - used, sorted(warns, key=lambda w: -int(w.split(":")[1][:-1]))[:2]
+
+
 def get_ram_stats():
     with open("/proc/meminfo") as f:
         total = avail = 0
@@ -194,34 +167,6 @@ def get_uptime():
     return up_t, "Boot\\ " + boot.replace(" ", "\\ ")
 
 
-def barrel(level):
-    rows = []
-    for i in range(8):
-        if (level == 0 and i == 7) or (level > 0 and i >= 8 - level):
-            rows.append("31")
-        else:
-            rows.append("0")
-    return " ".join(rows)
-
-
-def send_char(s, slot, level):
-    if level == -1:
-        send(s, f"set_char {slot} 0 0 0 0 0 0 0 0")
-    else:
-        send(s, f"set_char {slot} {barrel(level)}")
-
-
-def deg_glyph():
-    return "14 17 17 14 0 0 0 0"
-
-
-def send_hd(s, payload, degree=False):
-    b = b"widget_set dash hd 1 1 " + payload
-    if degree:
-        b += bytes([7])
-    s.sendall(b + b"\n")
-
-
 def send_info(s, line1, line2):
     s.sendall(f"widget_set dash hd 1 1 {line1}\n".encode())
     s.sendall(f"widget_set dash hd2 1 2 {line2}\n".encode())
@@ -236,12 +181,16 @@ def main():
     send(s, "screen_set dash -priority alert")
     send(s, "widget_add dash hd string")
     send(s, "widget_add dash hd2 string")
-    send(s, f"set_char 7 {deg_glyph()}")
+    send(s, "widget_add dash bar string")
+    send(s, "widget_add dash rhs string")
+    send(s, "widget_set dash hd 1 1 STO\\ [")
+    send(s, "set_char 1 28 28 28 28 28 28 28 28")
+    send(s, "set_char 2 31 31 31 31 31 31 31 31")
 
     threading.Thread(target=btn_thread, daemon=True).start()
 
-    prev_barrel = {}
-    prev_f1 = None
+    prev_bar = None
+    prev_pct = None
     prev_f2 = None
     prev_l1 = None
     prev_l2 = None
@@ -253,24 +202,33 @@ def main():
             is_all = mode == "all"
             if is_all != was_all:
                 if is_all:
-                    prev_f1 = None
+                    prev_bar = None
+                    prev_pct = None
                     prev_f2 = None
-                    prev_barrel = {}
+                    send(s, "widget_set dash hd 1 1 STO\\ [")
                     s.sendall(b"widget_set dash hd2 1 2 \\ \n")
                 else:
                     prev_l1 = prev_l2 = None
                 was_all = is_all
             if is_all:
-                temp = get_cpu_temp()
-                f1 = f"0\\ 1\\ 2\\ 3\\ 4\\ 5\\ {temp}".encode() + bytes([7])
-                if f1 != prev_f1:
-                    send_hd(s, f1)
-                    prev_f1 = f1
-                f2 = b"".join(
-                    ("--" if u is None else f"{min(u, 99):02d}").encode()
-                    for u in (get_use("sda") if ui == 0 else get_slot_use(ui)
-                              for ui in range(N_SLOTS))
+                ov, used, free, warns = get_storage_overview()
+                units = ov * 14 // 100
+                full, half = divmod(units, 2)
+                bar = b"".join(
+                    b"\x02" if i < full
+                    else (b"\x01" if (half and i == full) else b"_")
+                    for i in range(7)
                 )
+                if bar != prev_bar:
+                    prev_bar = bar
+                    s.sendall(b"widget_set dash bar 6 1 " + bar + b"\n")
+                pctv = f"{ov:02d}%"
+                if pctv != prev_pct:
+                    prev_pct = pctv
+                    send(s, f"widget_set dash rhs 13 1 ]{pctv}")
+                tot_kb = used + free
+                f2 = (f"{used / (1 << 30):04.1f}/{tot_kb / (1 << 30):04.1f}\\ TB"
+                      if not warns else " ".join(warns)).encode()
                 if f2 != prev_f2:
                     s.sendall(b"widget_set dash hd2 1 2 " + f2 + b"\n")
                     prev_f2 = f2
