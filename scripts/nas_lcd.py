@@ -122,23 +122,17 @@ PRESS_DOWN = 0x08
 def btn_thread():
     global mode, mode_since
     import traceback
-    print("btn_thread start", flush=True)
     while True:
         try:
             prev = BTN_RELEASE
             down_since = 0
             down_btn = 0
             screens = ["all", "up", "fan", "ip", "ram"]
-            last_hb = time.time()
             while True:
                 cur = btn_state()
                 now = time.time()
-                if now - last_hb > 5:
-                    print(f"HB prev=0x{prev:02x}", flush=True)
-                    last_hb = now
                 if cur != BTN_RELEASE and prev == BTN_RELEASE:
                     down_since, down_btn = now, cur
-                    print(f"BTN dn 0x{cur:02x}", flush=True)
                 elif cur == BTN_RELEASE and prev != BTN_RELEASE and down_since:
                     if now - down_since >= BTN_LONG:
                         if down_btn == PRESS_UP:
@@ -156,7 +150,6 @@ def btn_thread():
                 prev = cur
                 time.sleep(BTN_POLL)
         except Exception:
-            print("BTN THREAD CRASH", flush=True)
             traceback.print_exc()
             time.sleep(1)
 
