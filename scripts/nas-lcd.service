@@ -1,0 +1,11 @@
+[Unit]
+Description=NAS dashboard for DX4000 LCD
+After=lcdproc.service
+
+[Service]
+ExecStart=/usr/local/bin/nas_lcd.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
