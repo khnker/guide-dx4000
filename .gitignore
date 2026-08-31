@@ -3,3 +3,4 @@ __pycache__/
 
 # Engram AI agent memory
 .engram/
+.env

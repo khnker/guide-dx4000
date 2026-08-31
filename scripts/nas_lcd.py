@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import os
+import re
 import socket
 import subprocess
 import threading
@@ -33,6 +34,12 @@ def get_ip():
         if "." in line:
             return line
     return "???"
+
+
+def get_cpu_temp():
+    out = sh("sensors coretemp-isa-0000 2>/dev/null")
+    m = re.search(r"Core 0:\s+\+?(-?\d+)", out)
+    return int(m.group(1)) if m else 0
 
 
 def send(sock, cmd):
@@ -183,14 +190,14 @@ def main():
     send(s, "widget_add dash hd2 string")
     send(s, "widget_add dash bar string")
     send(s, "widget_add dash rhs string")
-    send(s, "widget_set dash hd 1 1 STO\\ [")
+    send(s, "widget_set dash rhs 16 1 ]")
     send(s, "set_char 1 28 28 28 28 28 28 28 28")
     send(s, "set_char 2 31 31 31 31 31 31 31 31")
 
     threading.Thread(target=btn_thread, daemon=True).start()
 
+    prev_hd = None
     prev_bar = None
-    prev_pct = None
     prev_f2 = None
     prev_l1 = None
     prev_l2 = None
@@ -202,36 +209,36 @@ def main():
             is_all = mode == "all"
             if is_all != was_all:
                 if is_all:
+                    prev_hd = None
                     prev_bar = None
-                    prev_pct = None
                     prev_f2 = None
-                    send(s, "widget_set dash hd 1 1 STO\\ [")
                     s.sendall(b"widget_set dash hd2 1 2 \\ \n")
                 else:
                     prev_l1 = prev_l2 = None
                 was_all = is_all
             if is_all:
+                temp = get_cpu_temp()
+                hd = f"{temp:02d}C\\ STO\\ ["
+                if hd != prev_hd:
+                    prev_hd = hd
+                    send(s, f"widget_set dash hd 1 1 {hd}")
                 ov, used, free, warns = get_storage_overview()
-                units = ov * 14 // 100
+                units = ov * 12 // 100
                 full, half = divmod(units, 2)
                 bar = b"".join(
                     b"\x02" if i < full
                     else (b"\x01" if (half and i == full) else b"_")
-                    for i in range(7)
+                    for i in range(6)
                 )
                 if bar != prev_bar:
                     prev_bar = bar
-                    s.sendall(b"widget_set dash bar 6 1 " + bar + b"\n")
-                pctv = f"{ov:02d}%"
-                if pctv != prev_pct:
-                    prev_pct = pctv
-                    send(s, f"widget_set dash rhs 13 1 ]{pctv}")
+                    s.sendall(b"widget_set dash bar 10 1 " + bar + b"\n")
                 tot_kb = used + free
-                f2 = (f"{used / (1 << 30):04.1f}/{tot_kb / (1 << 30):04.1f}\\ TB"
+                f2 = (f"{ov:02d}%\\ {used / (1 << 30):04.1f}/{tot_kb / (1 << 30):04.1f}\\ TB"
                       if not warns else " ".join(warns)).encode()
                 if f2 != prev_f2:
-                    s.sendall(b"widget_set dash hd2 1 2 " + f2 + b"\n")
                     prev_f2 = f2
+                    s.sendall(b"widget_set dash hd2 1 2 " + f2 + b"\n")
             else:
                 if mode == "ip":
                     info = (get_ip() + "\\ \\ \\ \\ ", "\\ ")
