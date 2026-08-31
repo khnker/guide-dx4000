@@ -4,7 +4,7 @@ DEVPATH=hwmon0=devices/platform/coretemp.0 hwmon1=devices/platform/nct6775.2608
 DEVNAME=hwmon0=coretemp hwmon1=nct6776
 FCTEMPS=hwmon1/pwm2=hwmon0/temp3_input
 FCFANS= hwmon1/pwm2=hwmon1/fan2_input
-MINTEMP=hwmon1/pwm2=40
+MINTEMP=hwmon1/pwm2=51
 MAXTEMP=hwmon1/pwm2=80
 MINPWM=hwmon1/pwm2=2
 MAXPWM=hwmon1/pwm2=100
