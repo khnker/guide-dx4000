@@ -46,11 +46,7 @@ def get_ip():
 
 
 def get_cputin_temp():
-    try:
-        out = open("/sys/class/hwmon/hwmon1/temp3_input").read()
-        return int(out.strip()) // 1000
-    except (IOError, ValueError):
-        return 0
+    return get_core_temp()
 
 
 def get_core_temp():
