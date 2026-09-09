@@ -19,6 +19,20 @@ def get_core_temp():
         return 0
 
 
+def get_cputin_temp():
+    try:
+        return int(open("/sys/class/hwmon/hwmon1/temp3_input").read().strip()) // 1000
+    except (IOError, ValueError):
+        return 0
+
+
+def get_fan_pwm():
+    try:
+        return int(open("/sys/class/hwmon/hwmon1/pwm2").read().strip())
+    except (IOError, ValueError):
+        return 0
+
+
 def get_storage_overview():
     try:
         total = used = 0
@@ -53,17 +67,17 @@ def main():
             while True:
                 try:
                     temp = get_core_temp()
+                    cputin = get_cputin_temp()
+                    pwm = get_fan_pwm()
                     ov, used, tot = get_storage_overview()
 
-                    filled = min(6, ov * 6 // 100)
-                    bar = ("#" * filled).ljust(6, ".")
-                    l1 = f"{temp:02d}C"
-                    l2 = f"{used:03.1f}/{tot:03.1f}TB".ljust(16)
+                    l1 = f"{temp:02d}C {cputin:02d}C P{pwm:02d}"
+                    l2 = f"{ov:02d}%{used:03.1f}/{tot:03.1f}TB"
 
                     send(s, f"widget_set dash hd 1 1 {l1}")
                     send(s, f"widget_set dash hd2 1 2 {l2}")
-                except Exception as e:
-                    print(f"Error updating LCD: {e}")
+                except Exception:
+                    pass
                 time.sleep(INTERVAL)
         except Exception:
             time.sleep(3)
