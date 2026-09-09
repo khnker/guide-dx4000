@@ -48,19 +48,22 @@ def main():
             send(s, "screen_set dash -priority alert")
             send(s, "widget_add dash hd string")
             send(s, "widget_add dash hd2 string")
+            time.sleep(0.5)
 
             while True:
-                temp = get_core_temp()
-                ov, used, tot = get_storage_overview()
+                try:
+                    temp = get_core_temp()
+                    ov, used, tot = get_storage_overview()
 
-                filled = min(6, ov * 6 // 100)
-                bar = ("#" * filled).ljust(6, ".")
-                l1 = f"{temp:02d}C [{bar}] {ov:02d}%".ljust(16)
-                l2 = f"{used:03.1f}/{tot:03.1f}TB".ljust(16)
+                    filled = min(6, ov * 6 // 100)
+                    bar = ("#" * filled).ljust(6, ".")
+                    l1 = f"{temp:02d}C"
+                    l2 = f"{used:03.1f}/{tot:03.1f}TB".ljust(16)
 
-                send(s, f"widget_set dash hd 1 1 {l1}")
-                send(s, f"widget_set dash hd2 1 2 {l2}")
-
+                    send(s, f"widget_set dash hd 1 1 {l1}")
+                    send(s, f"widget_set dash hd2 1 2 {l2}")
+                except Exception as e:
+                    print(f"Error updating LCD: {e}")
                 time.sleep(INTERVAL)
         except Exception:
             time.sleep(3)
