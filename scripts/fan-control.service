@@ -1,0 +1,11 @@
+[Unit]
+Description=Smart Fan Control for DX4000
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/python3 /usr/local/bin/fan_control.py
+Restart=always
+User=root
+
+[Install]
+WantedBy=multi-user.target
