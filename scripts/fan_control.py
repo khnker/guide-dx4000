@@ -5,12 +5,21 @@ FAN_PWM_PATH = "/sys/class/hwmon/hwmon1/pwm2"
 FAN_MIN = 10
 FAN_MAX = 255
 FAN_STEP = 2
-FAN_TARGET = 55
-FAN_HARD_LIMIT = 75
 FAN_INTERVAL = 5
 
+CORE_TARGET = 45
+CORE_HARD_LIMIT = 55
+CPUTIN_HARD_LIMIT = 70
 
-def get_temp():
+
+def get_core_temp():
+    try:
+        return int(open("/sys/class/hwmon/hwmon0/temp2_input").read().strip()) // 1000
+    except (IOError, ValueError):
+        return 0
+
+
+def get_cputin_temp():
     try:
         return int(open("/sys/class/hwmon/hwmon1/temp2_input").read().strip()) // 1000
     except (IOError, ValueError):
@@ -36,14 +45,19 @@ def get_pwm():
 def main():
     while True:
         try:
-            temp = get_temp()
+            core = get_core_temp()
+            cputin = get_cputin_temp()
             pwm = get_pwm()
-            if temp > FAN_HARD_LIMIT:
+
+            if cputin > CPUTIN_HARD_LIMIT:
+                pwm = FAN_MAX
+            elif core > CORE_HARD_LIMIT:
                 pwm = min(FAN_MAX, pwm + FAN_STEP * 4)
-            elif temp > FAN_TARGET:
+            elif core > CORE_TARGET:
                 pwm = min(FAN_MAX, pwm + FAN_STEP)
-            elif temp < FAN_TARGET - 5:
+            elif core < CORE_TARGET - 5:
                 pwm = max(FAN_MIN, pwm - FAN_STEP)
+
             set_pwm(pwm)
         except Exception:
             pass
