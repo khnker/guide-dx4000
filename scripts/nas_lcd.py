@@ -34,16 +34,20 @@ def get_storage_overview():
         return 0, 0.0, 0.0
 
 
+def send(s, cmd):
+    s.sendall((cmd + "\n").encode())
+
+
 def main():
     while True:
         try:
             s = socket.create_connection((LCD_HOST, LCD_PORT), timeout=5)
-            s.sendall(b"hello\n")
-            s.sendall(b"client_set -name nas-dash\n")
-            s.sendall(b"screen_add dash\n")
-            s.sendall(b"screen_set dash -priority alert\n")
-            s.sendall(b"widget_add dash hd string\n")
-            s.sendall(b"widget_add dash hd2 string\n")
+            send(s, "hello")
+            send(s, "client_set -name nas-dash")
+            send(s, "screen_add dash")
+            send(s, "screen_set dash -priority alert")
+            send(s, "widget_add dash hd string")
+            send(s, "widget_add dash hd2 string")
 
             while True:
                 temp = get_core_temp()
@@ -51,11 +55,11 @@ def main():
 
                 filled = min(6, ov * 6 // 100)
                 bar = "#" * filled + "." * (6 - filled)
-                l1 = f"{temp:02d}C [{bar}] {ov:02d}%".ljust(16)
-                l2 = f"{ov:02d}%_{used:03.1f}/{tot:03.1f}TB"
+                l1 = f"{temp:02d}C {bar}"
+                l2 = f"{ov:02d}%{used:03.1f}/{tot:03.1f}TB"
 
-                s.sendall(f"widget_set dash hd 1 1 {l1}\n".encode())
-                s.sendall(f"widget_set dash hd2 1 2 {l2}\n".encode())
+                send(s, f"widget_set dash hd 1 1 {l1}")
+                send(s, f"widget_set dash hd2 1 2 {l2}")
 
                 time.sleep(INTERVAL)
         except Exception:
