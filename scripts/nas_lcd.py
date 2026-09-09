@@ -24,8 +24,8 @@ FAN_RPM_PATH = "/sys/class/hwmon/hwmon1/fan2_input"
 FAN_MIN = 10
 FAN_MAX = 255
 FAN_STEP = 2
-FAN_TARGET = 55
-FAN_HARD_LIMIT = 70
+FAN_TARGET = 42
+FAN_HARD_LIMIT = 55
 FAN_INTERVAL = 5
 
 mode = "all"
@@ -46,11 +46,7 @@ def get_ip():
 
 
 def get_cputin_temp():
-    try:
-        out = open("/sys/class/hwmon/hwmon1/temp3_input").read()
-        return int(out.strip()) // 1000
-    except (IOError, ValueError):
-        return get_core_temp()
+    return get_core_temp()
 
 
 def get_core_temp():
