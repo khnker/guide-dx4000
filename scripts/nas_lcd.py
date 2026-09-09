@@ -54,9 +54,9 @@ def main():
                 ov, used, tot = get_storage_overview()
 
                 filled = min(6, ov * 6 // 100)
-                bar = "#" * filled + "." * (6 - filled)
-                l1 = f"{temp:02d}C {bar}"
-                l2 = f"{ov:02d}%{used:03.1f}/{tot:03.1f}TB"
+                bar = ("#" * filled).ljust(6, ".")
+                l1 = f"{temp:02d}C [{bar}] {ov:02d}%".ljust(16)
+                l2 = f"{used:03.1f}/{tot:03.1f}TB".ljust(16)
 
                 send(s, f"widget_set dash hd 1 1 {l1}")
                 send(s, f"widget_set dash hd2 1 2 {l2}")
