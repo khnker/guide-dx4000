@@ -60,8 +60,8 @@ def main():
             send(s, "client_set -name nas-dash")
             send(s, "screen_add dash")
             send(s, "screen_set dash -priority alert")
-            send(s, "widget_add dash hd string")
-            send(s, "widget_add dash hd2 string")
+            send(s, "widget_add dash l1 string")
+            send(s, "widget_add dash l2 string")
             time.sleep(0.5)
 
             while True:
@@ -71,7 +71,9 @@ def main():
                     pwm = get_fan_pwm()
                     ov, used, tot = get_storage_overview()
 
-                    l1 = f"{temp:02d}C\\ {cputin:02d}C\\ P{pwm:02d}"
+                    filled = min(6, ov * 6 // 100)
+                    bar = ("#" * filled).ljust(6, ".")
+                    l1 = f"[{temp:02d}C\\ {cputin:02d}C\\ P{pwm}]"
                     l2 = f"{ov:02d}%\\ {used:03.1f}/{tot:03.1f}TB"
 
                     send(s, f"widget_set dash hd 1 1 {l1}")
