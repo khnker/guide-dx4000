@@ -67,11 +67,10 @@ def main():
             while True:
                 try:
                     temp = get_core_temp()
-                    cputin = get_cputin_temp()
                     pwm = get_fan_pwm()
                     ov, used, tot = get_storage_overview()
 
-                    l1 = f"{temp:02d}C {cputin:02d}C P{pwm:02d}"
+                    l1 = f"{temp:02d}C P{pwm:02d}"
                     l2 = f"{ov:02d}% {used:03.1f}/{tot:03.1f}TB"
 
                     send(s, f"widget_set dash hd 1 1 {l1}")

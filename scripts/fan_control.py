@@ -8,20 +8,12 @@ FAN_STEP = 2
 FAN_INTERVAL = 5
 
 CORE_TARGET = 45
-CORE_HARD_LIMIT = 55
-CPUTIN_HARD_LIMIT = 70
+CORE_HARD_LIMIT = 60
 
 
 def get_core_temp():
     try:
         return int(open("/sys/class/hwmon/hwmon0/temp2_input").read().strip()) // 1000
-    except (IOError, ValueError):
-        return 0
-
-
-def get_cputin_temp():
-    try:
-        return int(open("/sys/class/hwmon/hwmon1/temp2_input").read().strip()) // 1000
     except (IOError, ValueError):
         return 0
 
@@ -46,12 +38,9 @@ def main():
     while True:
         try:
             core = get_core_temp()
-            cputin = get_cputin_temp()
             pwm = get_pwm()
 
-            if cputin > CPUTIN_HARD_LIMIT:
-                pwm = FAN_MAX
-            elif core > CORE_HARD_LIMIT:
+            if core > CORE_HARD_LIMIT:
                 pwm = min(FAN_MAX, pwm + FAN_STEP * 4)
             elif core > CORE_TARGET:
                 pwm = min(FAN_MAX, pwm + FAN_STEP)
