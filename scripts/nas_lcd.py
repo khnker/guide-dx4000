@@ -51,7 +51,7 @@ def main():
 
                 filled = min(6, ov * 6 // 100)
                 bar = "#" * filled + "." * (6 - filled)
-                l1 = f"{temp:02d}C [{bar}]"
+                l1 = f"{temp:02d}C [{bar}] {ov:02d}%".ljust(16)
                 l2 = f"{ov:02d}%_{used:03.1f}/{tot:03.1f}TB"
 
                 s.sendall(f"widget_set dash hd 1 1 {l1}\n".encode())
