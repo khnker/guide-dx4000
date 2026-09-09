@@ -7,21 +7,30 @@ Setup guide and tooling to turn a WD Sentinel DX4000 into a Debian server with a
 | `README.md` | **Complete installation guide** (this file) |
 | `configs/fancontrol` | fancontrol config (PWM2 superIO nct6775, MINTEMP=40 / MAXTEMP=80) |
 | `configs/LCDd.conf` | lcdproc config (hd44780 driver, ConnectionType=winamp, Port=0x378) |
-| `scripts/nas_lcd.py` | LCD dashboard: all/up/fan/ip/ram screens + front-panel buttons via SuperIO |
+| `scripts/nas_lcd.py` | LCD dashboard: temp + storage lines + fan thread. Simplified version for stability. |
 | `scripts/buttons_poll.py` / `buttons_scan.py` | Button polling/scanning utilities |
 | `scripts/nas-lcd.service` | systemd unit for the dashboard |
 
 ## Dashboard (nas_lcd.py)
 
-A single LCDd screen `dash` — mixing 2 priority-switched screens froze the HD44780 module, so everything lives in one screen.
+**Estado actual: Líneas de texto estables (sin CGRAM, sin caracteres especiales).**
 
-- **Screens** (navigated with the panel arrows): `all` (storage overview), `up` (uptime), `fan` (RPM/LOAD), `ip`, `ram`
-- **First view** (`all`): `STO [██████_] 87%` — aggregate storage bar of all mounted disks + used/total in TB (`00.0/00.4 TB`) on the second line
-- **Low free space**: when any disk drops below 30 % free, the second line switches to the top-2 warnings: `sda:87% sdb:92%`
-- **Bar rendering**: 7 cells — `_` (empty), half-block and full-block CGRAM glyphs (set once at startup via `set_char`; no per-update CGRAM writes, which kept the HD44780 stable)
-- **Hardware interaction**: requires LCDd patched with `set_char`
+- Línea 1: Temperatura del CPU + barra de almacenamiento (ej: `39C [####..] 41%`)
+- Línea 2: Uso de espacio en TB (ej: `41% 01.7/04.0 TB`)
 
-Requires a patched LCDd 0.5.9 with the `set_char` command.
+**Problemas conocidos y soluciones aplicadas:**
+
+1. **CGRAM/Special Characters Freeze:** El driver `hd44780` parcheado (set_char) congela la pantalla si se envían demasiados comandos de actualización o caracteres especiales (ROM 0xA0-0xA7, CGRAM). *Solución: Eliminar set_char y usar solo texto ASCII.*
+2. **Protocolo LCDd Sensitivity:** El parser de LCDd corta strings en espacios en blanco si no se escapan correctamente (`\ `) o si se envían más de 16 caracteres por widget. *Solución: Usar `ljust(16)` y sin espacios complejos.*
+3. **Widget Overflow:** Intentar dibujar una barra de progreso con un widget separado (`widget_add bar string`) mientras se actualiza el widget de texto principal causa conflictos de protocolo. *Solución: Un solo widget de texto por línea.*
+
+**Estado del ventilador (Fan):**
+
+- Controlado por `nas_lcd.py` (hilo `fan_thread`).
+- Sensor: `coretemp` (aunque a veces falla, se usa como referencia, fallback a hwmon0/temp2_input).
+- Rango de PWM: 10 (mínimo silencioso) a 255 (máximo).
+- Objetivo de temperatura: 42°C (target), 55°C (hard limit).
+- *Nota sobre hardware:* El ventilador original DX4000 no era PWM (DC control). Se reemplazó por uno compatible PWM y se conectó al mismo header `pwm2`.
 
 ## Deploy
 
