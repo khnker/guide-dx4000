@@ -1,0 +1,12 @@
+# .wam — memoria operacional (spec §17, versionado configurable)
+# Candidato a versionar (conocimiento operacional estable):
+#   context/project.md
+#   context/architecture.md
+#   context/decisions.md
+#   context/constraints.md
+# Normalmente regenerable / runtime (ignorar):
+cache/
+tasks/
+history/
+skills/
+.engram/

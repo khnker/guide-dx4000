@@ -1,0 +1,322 @@
+[33mcommit 05d8a6694e0c4a9d1ae6be364a0a552a9ed0b6eb[m
+Author: nicolas <nicolas@dx4000.local>
+Date:   Wed Aug 26 16:53:08 2026 -0400
+
+    WD Sentinel DX4000: install guide, fan and LCD control, patched set_char dashboard
+
+[1mdiff --git a/scripts/nas_lcd.py b/scripts/nas_lcd.py[m
+[1mnew file mode 100644[m
+[1mindex 0000000..3d776cc[m
+[1m--- /dev/null[m
+[1m+++ b/scripts/nas_lcd.py[m
+[36m@@ -0,0 +1,309 @@[m
+[32m+[m[32m#!/usr/bin/env python3[m
+[32m+[m[32mimport os[m
+[32m+[m[32mimport re[m
+[32m+[m[32mimport socket[m
+[32m+[m[32mimport subprocess[m
+[32m+[m[32mimport threading[m
+[32m+[m[32mimport time[m
+[32m+[m
+[32m+[m
+[32m+[m[32mLCD_HOST = "127.0.0.1"[m
+[32m+[m[32mLCD_PORT = 13666[m
+[32m+[m[32mINTERVAL = 2[m
+[32m+[m[32mBTN_POLL = 0.02[m
+[32m+[m[32mBTN_HOLD = 4[m
+[32m+[m[32mBTN_LONG = 1.5[m
+[32m+[m
+[32m+[m[32mBTN_RELEASE = 0x0C[m
+[32m+[m[32mBTN_UP = 0x08[m
+[32m+[m[32mBTN_DOWN = 0x04[m
+[32m+[m
+[32m+[m[32mN_SLOTS = 6[m
+[32m+[m
+[32m+[m[32mmode = "all"[m
+[32m+[m[32mmode_since = 0[m
+[32m+[m[32mbtn_fd = None[m
+[32m+[m[32mbtn_lock = threading.Lock()[m
+[32m+[m
+[32m+[m
+[32m+[m[32mdef sh(cmd):[m
+[32m+[m[32m    return subprocess.run(cmd, shell=True, capture_output=True, text=True).stdout.strip()[m
+[32m+[m
+[32m+[m
+[32m+[m[32mdef get_ip():[m
+[32m+[m[32m    for line in sh("hostname -I").split():[m
+[32m+[m[32m        if "." in line:[m
+[32m+[m[32m            return line[m
+[32m+[m[32m    return "???"[m
+[32m+[m
+[32m+[m
+[32m+[m[32mdef get_cpu_temp():[m
+[32m+[m[32m    out = sh("sensors coretemp-isa-0000 2>/dev/null")[m
+[32m+[m[32m    m = re.search(r"Core 0:\s+\+?(-?\d+)", out)[m
+[32m+[m[32m    return int(m.group(1)) if m else 0[m
+[32m+[m
+[32m+[m
+[32m+[m[32mdef slot_dev(n):[m
+[32m+[m[32m    try:[m
+[32m+[m[32m        blocks = os.listdir(f"/sys/bus/scsi/devices/{n - 1}:0:0:0/block")[m
+[32m+[m[32m    except OSError:[m
+[32m+[m[32m        return None[m
+[32m+[m[32m    return blocks[0] if blocks else None[m
+[32m+[m
+[32m+[m
+[32m+[m[32mdef get_use(dev):[m
+[32m+[m[32m    part = dev[m
+[32m+[m[32m    with open("/proc/partitions") as f:[m
+[32m+[m[32m        for line in f:[m
+[32m+[m[32m            cols = line.split()[m
+[32m+[m[32m            if len(cols) < 4:[m
+[32m+[m[32m                continue[m
+[32m+[m[32m            p = cols[-1][m
+[32m+[m[32m            if p.startswith(dev) and p != dev:[m
+[32m+[m[32m                part = p[m
+[32m+[m[32m                break[m
+[32m+[m[32m    line = sh(f"df -P /dev/{part}")[m
+[32m+[m[32m    rows = line.splitlines()[m
+[32m+[m[32m    if len(rows) < 2 or "/dev" not in line:[m
+[32m+[m[32m        return None[m
+[32m+[m[32m    return int(rows[1].split()[4].rstrip("%"))[m
+[32m+[m
+[32m+[m
+[32m+[m[32mdef get_slot_use(n):[m
+[32m+[m[32m    if n == N_SLOTS:[m
+[32m+[m[32m        return get_use("sda")[m
+[32m+[m[32m    dev = slot_dev(n)[m
+[32m+[m[32m    if dev:[m
+[32m+[m[32m        return get_use(dev)[m
+[32m+[m[32m    return None[m
+[32m+[m
+[32m+[m
+[32m+[m[32mdef send(sock, cmd):[m
+[32m+[m[32m    sock.sendall(cmd.encode() + b"\n")[m
+[32m+[m
+[32m+[m
+[32m+[m[32mdef connect():[m
+[32m+[m[32m    return socket.create_connection((LCD_HOST, LCD_PORT), timeout=5)[m
+[32m+[m
+[32m+[m
+[32m+[m[32mdef btn_open():[m
+[32m+[m[32m    global btn_fd[m
+[32m+[m[32m    btn_fd = os.open("/dev/port", os.O_RDWR)[m
+[32m+[m[32m    _btn_wr(0x4E, 0x87)[m
+[32m+[m[32m    _btn_wr(0x4E, 0x87)[m
+[32m+[m[32m    _btn_wr(0x4E, 0x07)[m
+[32m+[m[32m    _btn_wr(0x4F, 0x07)[m
+[32m+[m[32m    _btn_wr(0x4E, 0xE9)[m
+[32m+[m
+[32m+[m
+[32m+[m[32mdef _btn_wr(port, v):[m
+[32m+[m[32m    os.lseek(btn_fd, port, 0)[m
+[32m+[m[32m    os.write(btn_fd, bytes([v]))[m
+[32m+[m
+[32m+[m
+[32m+[m[32mdef btn_state():[m
+[32m+[m[32m    global btn_fd[m
+[32m+[m[32m    with btn_lock:[m
+[32m+[m[32m        if btn_fd is None:[m
+[32m+[m[32m            btn_open()[m
+[32m+[m[32m        os.lseek(btn_fd, 0x4F, 0)[m
+[32m+[m[32m        try:[m
+[32m+[m[32m            return os.read(btn_fd, 1)[0][m
+[32m+[m[32m        except OSError:[m
+[32m+[m[32m            os.close(btn_fd)[m
+[32m+[m[32m            btn_fd = None[m
+[32m+[m[32m            return BTN_RELEASE[m
+[32m+[m
+[32m+[m
+[32m+[m[32mPRESS_UP = 0x04[m
+[32m+[m[32mPRESS_DOWN = 0x08[m
+[32m+[m
+[32m+[m
+[32m+[m[32mdef btn_thread():[m
+[32m+[m[32m    global mode, mode_since[m
+[32m+[m[32m    import traceback[m
+[32m+[m[32m    print("btn_thread start", flush=True)[m
+[32m+[m[32m    while True:[m
+[32m+[m[32m        try:[m
+[32m+[m[32m            prev = BTN_RELEASE[m
+[32m+[m[32m            down_since = 0[m
+[32m+[m[32m            down_btn = 0[m
+[32m+[m[32m            screens = ["all", "up", "fan", "ip", "ram"][m
+[32m+[m[32m            last_hb = time.time()[m
+[32m+[m[32m            while True:[m
+[32m+[m[32m                cur = btn_state()[m
+[32m+[m[32m                now = time.time()[m
+[32m+[m[32m                if now - last_hb > 5:[m
+[32m+[m[32m                    print(f"HB prev=0x{prev:02x}", flush=True)[m
+[32m+[m[32m                    last_hb = now[m
+[32m+[m[32m                if cur != BTN_RELEASE and prev == BTN_RELEASE:[m
+[32m+[m[32m                    down_since, down_btn = now, cur[m
+[32m+[m[32m                    print(f"BTN dn 0x{cur:02x}", flush=True)[m
+[32m+[m[32m                elif cur == BTN_RELEASE and prev != BTN_RELEASE and down_since:[m
+[32m+[m[32m                    if now - down_since >= BTN_LONG:[m
+[32m+[m[32m                        if down_btn == PRESS_UP:[m
+[32m+[m[32m                            mode, mode_since = "ip", now[m
+[32m+[m[32m                        else:[m
+[32m+[m[32m                            mode = {"all": "ram", "ram": "fan", "fan": "all"}.get(mode, "all")[m
+[32m+[m[32m                            mode_since = now[m
+[32m+[m[32m                    else:[m
+[32m+[m[32m                        idx = screens.index(mode) if mode in screens else 0[m
+[32m+[m[32m                        if down_btn == PRESS_UP:[m
+[32m+[m[32m                            mode, mode_since = screens[(idx + 1) % 5], now[m
+[32m+[m[32m                        elif down_btn == PRESS_DOWN:[m
+[32m+[m[32m                            mode, mode_since = screens[(idx - 1) % 5], now[m
+[32m+[m[32m                    down_since = 0[m
+[32m+[m[32m                prev = cur[m
+[32m+[m[32m                time.sleep(BTN_POLL)[m
+[32m+[m[32m        except Exception:[m
+[32m+[m[32m            print("BTN THREAD CRASH", flush=True)[m
+[32m+[m[32m            traceback.print_exc()[m
+[32m+[m[32m            time.sleep(1)[m
+[32m+[m
+[32m+[m
+[32m+[m[32mdef get_ram_stats():[m
+[32m+[m[32m    with open("/proc/meminfo") as f:[m
+[32m+[m[32m        total = avail = 0[m
+[32m+[m[32m        for line in f:[m
+[32m+[m[32m            if line.startswith("MemTotal:"):[m
+[32m+[m[32m                total = int(line.split()[1])[m
+[32m+[m[32m            elif line.startswith("MemAvailable:"):[m
+[32m+[m[32m                avail = int(line.split()[1])[m
+[32m+[m[32m                break[m
+[32m+[m[32m    used = max(0, total - avail)[m
+[32m+[m[32m    pct = used * 100 // total if total else 0[m
+[32m+[m[32m    g = lambda kb: kb / 1024 / 1024[m
+[32m+[m[32m    return pct, g(used), g(avail)[m
+[32m+[m
+[32m+[m
+[32m+[m[32mdef get_fan_rpm():[m
+[32m+[m[32m    try:[m
+[32m+[m[32m        return int(open("/sys/class/hwmon/hwmon1/fan2_input").read())[m
+[32m+[m[32m    except (IOError, ValueError):[m
+[32m+[m[32m        return 0[m
+[32m+[m
+[32m+[m
+[32m+[m[32mdef get_loads():[m
+[32m+[m[32m    parts = open("/proc/loadavg").read().split()[m
+[32m+[m[32m    return parts[0], parts[1][m
+[32m+[m
+[32m+[m
+[32m+[m[32mdef get_uptime():[m
+[32m+[m[32m    up = float(open("/proc/uptime").read().split()[0])[m
+[32m+[m[32m    d, r = divmod(int(up), 86400)[m
+[32m+[m[32m    h, m = divmod(r, 3600)[m
+[32m+[m[32m    m //= 60[m
+[32m+[m[32m    if d:[m
+[32m+[m[32m        up_t = f"UPTIME\\ {d}d\\ {h:02d}:{m:02d}"[m
+[32m+[m[32m    else:[m
+[32m+[m[32m        up_t = f"UPTIME\\ {h:02d}:{m:02d}"[m
+[32m+[m[32m    boot = time.strftime("%m/%d %H:%M", time.localtime(time.time() - up))[m
+[32m+[m[32m    return up_t, "Boot\\ " + boot.replace(" ", "\\ ")[m
+[32m+[m
+[32m+[m
+[32m+[m[32mdef barrel(level):[m
+[32m+[m[32m    rows = [][m
+[32m+[m[32m    for i in range(8):[m
+[32m+[m[32m        if (level == 0 and i == 7) or (level > 0 and i >= 8 - level):[m
+[32m+[m[32m            rows.append("31")[m
+[32m+[m[32m        else:[m
+[32m+[m[32m            rows.append("0")[m
+[32m+[m[32m    return " ".join(rows)[m
+[32m+[m
+[32m+[m
+[32m+[m[32mdef send_char(s, slot, level):[m
+[32m+[m[32m    if level == -1:[m
+[32m+[m[32m        send(s, f"set_char {slot} 0 0 0 0 0 0 0 0")[m
+[32m+[m[32m    else:[m
+[32m+[m[32m        send(s, f"set_char {slot} {barrel(level)}")[m
+[32m+[m
+[32m+[m
+[32m+[m[32mdef deg_glyph():[m
+[32m+[m[32m    return "14 17 17 14 0 0 0 0"[m
+[32m+[m
+[32m+[m
+[32m+[m[32mdef send_hd(s, payload, degree=False):[m
+[32m+[m[32m    b = b"widget_set dash hd 1 1 " + payload[m
+[32m+[m[32m    if degree:[m
+[32m+[m[32m        b += bytes([7])[m
+[32m+[m[32m    s.sendall(b + b"\n")[m
+[32m+[m
+[32m+[m
+[32m+[m[32mdef send_info(s, line1, line2):[m
+[32m+[m[32m    s.sendall(f"widget_set dash hd 1 1 {line1}\n".encode())[m
+[32m+[m[32m    s.sendall(f"widget_set dash hd2 1 2 {line2}\n".encode())[m
+[32m+[m
+[32m+[m
+[32m+[m[32mdef main():[m
+[32m+[m[32m    global mode, mode_since[m
+[32m+[m[32m    s = connect()[m
+[32m+[m[32m    send(s, "hello")[m
+[32m+[m[32m    send(s, "client_set -name nas-dash")[m
+[32m+[m[32m    send(s, "screen_add dash")[m
+[32m+[m[32m    send(s, "screen_set dash -priority alert")[m
+[32m+[m[32m    send(s, "widget_add dash hd string")[m
+[32m+[m[32m    send(s, "widget_add dash hd2 string")[m
+[32m+[m[32m    send(s, f"set_char 7 {deg_glyph()}")[m
+[32m+[m
+[32m+[m[32m    threading.Thread(target=btn_thread, daemon=True).start()[m
+[32m+[m
+[32m+[m[32m    prev_barrel = {}[m
+[32m+[m[32m    prev_f1 = None[m
+[32m+[m[32m    prev_f2 = None[m
+[32m+[m[32m    prev_l1 = None[m
+[32m+[m[32m    prev_l2 = None[m
+[32m+[m[32m    was_all = True[m
+[32m+[m[32m    try:[m
+[32m+[m[32m        while True:[m
+[32m+[m[32m            if mode != "all" and time.time() - mode_since > BTN_HOLD:[m
+[32m+[m[32m                mode = "all"[m
+[32m+[m[32m            is_all = mode == "all"[m
+[32m+[m[32m            if is_all != was_all:[m
+[32m+[m[32m                if is_all:[m
+[32m+[m[32m                    prev_f1 = None[m
+[32m+[m[32m                    prev_f2 = None[m
+[32m+[m[32m                    prev_barrel = {}[m
+[32m+[m[32m                    s.sendall(b"widget_set dash hd2 1 2 \\ \n")[m
+[32m+[m[32m                else:[m
+[32m+[m[32m                    prev_l1 = prev_l2 = None[m
+[32m+[m[32m                was_all = is_all[m
+[32m+[m[32m            if is_all:[m
+[32m+[m[32m                temp = get_cpu_temp()[m
+[32m+[m[32m                f1 = f"0\\ 1\\ 2\\ 3\\ 4\\ 5\\ {temp}".encode() + bytes([7])[m
+[32m+[m[32m                if f1 != prev_f1:[m
+[32m+[m[32m                    send_hd(s, f1)[m
+[32m+[m[32m                    prev_f1 = f1[m
+[32m+[m[32m                f2 = b"".join([m
+[32m+[m[32m                    ("--" if u is None else f"{min(u, 99):02d}").encode()[m
+[32m+[m[32m                    for u in (get_use("sda") if ui == 0 else get_slot_use(ui)[m
+[32m+[m[32m                              for ui in range(N_SLOTS))[m
+[32m+[m[32m                )[m
+[32m+[m[32m                if f2 != prev_f2:[m
+[32m+[m[32m                    s.sendall(b"widget_set dash hd2 1 2 " + f2 + b"\n")[m
+[32m+[m[32m                    prev_f2 = f2[m
+[32m+[m[32m            else:[m
+[32m+[m[32m                if mode == "ip":[m
+[32m+[m[32m                    info = (get_ip() + "\\ \\ \\ \\ ", "\\ ")[m
+[32m+[m[32m                elif mode == "up":[m
+[32m+[m[32m                    info = get_uptime()[m
+[32m+[m[32m                elif mode == "ram":[m
+[32m+[m[32m                    pct, ug, fg = get_ram_stats()[m
+[32m+[m[32m                    info = (f"RAM\\ {pct:>2}%\\ {ug:.2f}G",[m
+[32m+[m[32m                            f"FREE\\ {fg:.2f}G\\ /{ug + fg:.1f}G")[m
+[32m+[m[32m                else:[m
+[32m+[m[32m                    l1, l5 = get_loads()[m
+[32m+[m[32m                    info = (f"FAN\\ {get_fan_rpm():>4}\\ RPM",[m
+[32m+[m[32m                            f"LOAD\\ {l1[:4]}\\ {l5[:4]}")[m
+[32m+[m[32m                if (info[0], info[1]) != (prev_l1, prev_l2):[m
+[32m+[m[32m                    send_info(s, info[0], info[1])[m
+[32m+[m[32m                    prev_l1, prev_l2 = info[0], info[1][m
+[32m+[m[32m            time.sleep(INTERVAL)[m
+[32m+[m[32m    except (KeyboardInterrupt, ConnectionError):[m
+[32m+[m[32m        pass[m
+[32m+[m[32m    finally:[m
+[32m+[m[32m        send(s, "screen_del dash")[m
+[32m+[m[32m        s.close()[m
+[32m+[m
+[32m+[m
+[32m+[m[32mif __name__ == "__main__":[m
+[32m+[m[32m    main()[m
+\ No newline at end of file[m

@@ -1,0 +1,23 @@
+{
+  "traceId": "default",
+  "timestamp": "2026-09-11T19:31:05.245Z",
+  "entries": [
+    {
+      "type": "CONCEPT_EXTRACTION",
+      "timestamp": "2026-09-11T19:31:05.245Z",
+      "concept": "listo,intentalo otra vez",
+      "metadata": {
+        "source": "user"
+      }
+    },
+    {
+      "type": "CANDIDATE_RETRIEVAL",
+      "timestamp": "2026-09-11T19:31:05.246Z",
+      "query": "listo,intentalo otra vez",
+      "candidatesCount": 2118,
+      "metadata": {
+        "source": "registry"
+      }
+    }
+  ]
+}
