@@ -11,9 +11,9 @@ FAN_INTERVAL = 5
 CORE_TARGET = 45
 CORE_HARD_LIMIT = 60
 CORE_IDLE = 35
-DISK_TARGET = 44
+DISK_TARGET = 48
 DISK_HARD_LIMIT = 50
-DISK_IDLE = 40
+DISK_IDLE = 45
 DISK_DEVICES = ["/dev/sda", "/dev/sdb", "/dev/sdd", "/dev/sde", "/dev/sdf"]
 
 def read_sys(path):
