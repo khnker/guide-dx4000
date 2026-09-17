@@ -17,6 +17,7 @@ FAN_ENABLE_PATH = "/sys/class/hwmon/hwmon1/pwm2_enable"
 FAN_MIN = _CFG["FAN_MIN"]
 FAN_MAX = _CFG["FAN_MAX"]
 FAN_MAX_CAP = _CFG["FAN_MAX_CAP"]
+START_PWM = _CFG["START_PWM"]
 FAN_INTERVAL = _CFG["FAN_INTERVAL"]
 DISK_DEVICES = ["/dev/sda", "/dev/sdb", "/dev/sdd", "/dev/sde", "/dev/sdf"]
 
@@ -110,7 +111,7 @@ def compute_pwm(core_temp, disk_info, current_pwm):
         return FAN_MAX
 
     if _stable_pwm is None:
-        start_pwm = max(_pwm_floor, min(FAN_MAX_CAP, 100))
+        start_pwm = max(_pwm_floor, min(FAN_MAX_CAP, START_PWM))
         _stable_pwm = start_pwm
         _last_change_time = now
         _last_action = "init"
@@ -126,12 +127,14 @@ def compute_pwm(core_temp, disk_info, current_pwm):
         _pwm_floor = min(FAN_MAX_CAP, _stable_pwm + LEARN_FLOOR_BOOST)
         _tuning_locked = True
 
-    if disk_temp > DISK_TARGET + DEADBAND_HIGH:
-        if disk_temp > DISK_TARGET + 5:
-            step = PWM_SEARCH_STEP * 4
-        else:
-            step = PWM_SEARCH_STEP * 2
-        new_pwm = min(FAN_MAX_CAP, _stable_pwm + step)
+    if disk_temp >= DISK_HARD_LIMIT:
+        _stable_pwm = FAN_MAX
+        _last_change_time = now
+        _last_action = "critical"
+        return FAN_MAX
+
+    if disk_temp > DISK_TARGET + DEADBAND_HIGH and disk_temp < DISK_HARD_LIMIT:
+        new_pwm = min(FAN_MAX_CAP, _stable_pwm + PWM_SEARCH_STEP)
         if new_pwm != _stable_pwm:
             _stable_pwm = new_pwm
             _last_change_time = now

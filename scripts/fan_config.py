@@ -12,6 +12,7 @@ DEFAULTS = {
     "FAN_MIN": 14,
     "FAN_MAX": 255,
     "FAN_MAX_CAP": 178,
+    "START_PWM": 70,
     "CORE_IDLE": 35,
     "CORE_TARGET": 45,
     "CORE_CRITICAL": 60,
