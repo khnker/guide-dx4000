@@ -1,32 +1,51 @@
 #!/usr/bin/env python3
+import sys
+import os
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 import subprocess
 import time
 from datetime import datetime
 from smart_monitor import get_all_disk_data, get_fallback_disk_info
+from fan_config import load as _load_config
+
+_CFG = _load_config()
 
 FAN_PWM_PATH = "/sys/class/hwmon/hwmon1/pwm2"
 FAN_ENABLE_PATH = "/sys/class/hwmon/hwmon1/pwm2_enable"
-FAN_MIN = 14
-FAN_MAX = 255
-FAN_INTERVAL = 5
+FAN_MIN = _CFG["FAN_MIN"]
+FAN_MAX = _CFG["FAN_MAX"]
+FAN_MAX_CAP = _CFG["FAN_MAX_CAP"]
+FAN_INTERVAL = _CFG["FAN_INTERVAL"]
 DISK_DEVICES = ["/dev/sda", "/dev/sdb", "/dev/sdd", "/dev/sde", "/dev/sdf"]
 
-# Temperature thresholds
-CORE_IDLE = 35
-CORE_TARGET = 45
-CORE_CRITICAL = 60
-DISK_TARGET = 42      # Keep disks below this
-DISK_HARD_LIMIT = 50  # Never exceed this
+CORE_IDLE = _CFG["CORE_IDLE"]
+CORE_TARGET = _CFG["CORE_TARGET"]
+CORE_CRITICAL = _CFG["CORE_CRITICAL"]
+DISK_TARGET = _CFG["DISK_TARGET"]
+DISK_HARD_LIMIT = _CFG["DISK_HARD_LIMIT"]
 
-# Adaptive PWM: find the minimum speed that keeps disks cool
-PWM_SEARCH_STEP = 5   # How much to adjust when searching
-PWM_STABLE_THRESHOLD = 2  # Degrees below target to consider "stable"
+PWM_SEARCH_STEP = 5
+PWM_STABLE_THRESHOLD = _CFG["PWM_STABLE_THRESHOLD"]
+DECREASE_STEP = _CFG["DECREASE_STEP"]
+DEADBAND_HIGH = _CFG["DEADBAND_HIGH"]
+LEARN_FLOOR_BOOST = _CFG["LEARN_FLOOR_BOOST"]
+MIN_STABILIZE_SECONDS = _CFG["MIN_STABILIZE_SECONDS"]
+OBSERVATION_WINDOW = _CFG["OBSERVATION_WINDOW"]
+PROBE_INTERVAL = _CFG["PROBE_INTERVAL"]
 
-# State: track the PWM that worked
 _stable_pwm = None
 _last_temp = 0
 _last_change_time = 0
-MIN_STABILIZE_SECONDS = 60  # Wait before adjusting again
+_last_action = "idle"
+_pwm_floor = _CFG["PWM_FLOOR"] if _CFG["PWM_FLOOR"] > 0 else FAN_MIN
+_candidate_pwm = None
+_candidate_start = 0
+_candidate_min_temp = 999
+_candidate_max_temp = 0
+_probe_due_at = 0
+_tuning_locked = False
 
 def read_sys(path):
     try:
@@ -39,7 +58,6 @@ def get_core_temp():
     return v // 1000 if v is not None else 0
 
 def get_disk_info():
-    """Get disk data from SMART monitor with caching."""
     try:
         data = get_all_disk_data(DISK_DEVICES)
         if not data:
@@ -50,61 +68,93 @@ def get_disk_info():
             for a in d["alerts"]:
                 hottest["alerts_all"].append(a)
         return hottest
-    except Exception:
+    except Exception as e:
+        print(f"get_disk_info error: {e}", flush=True)
         return get_fallback_disk_info()
 
+def _start_candidate(pwm, now):
+    global _candidate_pwm, _candidate_start, _candidate_min_temp
+    global _candidate_max_temp, _probe_due_at
+    _candidate_pwm = pwm
+    _candidate_start = now
+    _candidate_min_temp = 999
+    _candidate_max_temp = 0
+    _probe_due_at = now + PROBE_INTERVAL
+
+def _observe_candidate(disk_temp, now):
+    global _candidate_min_temp, _candidate_max_temp
+    if disk_temp < _candidate_min_temp:
+        _candidate_min_temp = disk_temp
+    if disk_temp > _candidate_max_temp:
+        _candidate_max_temp = disk_temp
+
+def _candidate_passed(now):
+    return (now - _candidate_start) >= OBSERVATION_WINDOW
+
+def _candidate_failed():
+    return _candidate_max_temp > DISK_TARGET
+
 def compute_pwm(core_temp, disk_info, current_pwm):
-    """Adaptive PWM: find minimum speed that keeps disks cool.
-    
-    Strategy:
-    1. If disks hot → increase PWM
-    2. If disks cool AND we've been stable → try decreasing
-    3. Once we find the sweet spot, hold it
-    """
-    global _stable_pwm, _last_temp, _last_change_time
-    
+    global _stable_pwm, _last_temp, _last_change_time, _last_action, _pwm_floor
+    global _candidate_pwm, _candidate_start, _candidate_min_temp, _candidate_max_temp
+    global _probe_due_at, _tuning_locked
     disk_temp = disk_info["temp"] if disk_info["temp"] > 0 else DISK_TARGET
     now = time.time()
-    
-    # Critical: always go max
+
     if core_temp > CORE_CRITICAL or disk_temp > DISK_HARD_LIMIT:
         _stable_pwm = None
         _last_change_time = now
+        _last_action = "emergency"
+        _tuning_locked = False
+        _candidate_pwm = None
         return FAN_MAX
-    
-    # If we don't have a stable PWM yet, start searching
+
     if _stable_pwm is None:
-        _stable_pwm = max(FAN_MIN, min(FAN_MAX, 80))  # Start at moderate speed
+        start_pwm = max(_pwm_floor, min(FAN_MAX_CAP, 100))
+        _stable_pwm = start_pwm
         _last_change_time = now
-    
-    time_since_change = now - _last_change_time
-    
-    # If disks are too hot, increase immediately
-    if disk_temp > DISK_TARGET:
-        # Scale increase based on how hot
+        _last_action = "init"
+        _start_candidate(start_pwm, now)
+        return _stable_pwm
+
+    if _candidate_pwm is None:
+        _start_candidate(_stable_pwm, now)
+
+    _observe_candidate(disk_temp, now)
+
+    if _candidate_pwm is not None and _candidate_failed() and not _tuning_locked:
+        _pwm_floor = min(FAN_MAX_CAP, _stable_pwm + LEARN_FLOOR_BOOST)
+        _tuning_locked = True
+
+    if disk_temp > DISK_TARGET + DEADBAND_HIGH:
         if disk_temp > DISK_TARGET + 5:
-            step = PWM_SEARCH_STEP * 4  # Hot: increase fast
+            step = PWM_SEARCH_STEP * 4
         else:
-            step = PWM_SEARCH_STEP * 2  # Warm: increase moderate
-        _stable_pwm = min(FAN_MAX, _stable_pwm + step)
-        _last_change_time = now
+            step = PWM_SEARCH_STEP * 2
+        new_pwm = min(FAN_MAX_CAP, _stable_pwm + step)
+        if new_pwm != _stable_pwm:
+            _stable_pwm = new_pwm
+            _last_change_time = now
+            _last_action = "increase"
+            _start_candidate(_stable_pwm, now)
         _last_temp = disk_temp
         return _stable_pwm
-    
-    # If disks are cool and we've waited long enough, try to decrease
-    if disk_temp < DISK_TARGET - PWM_STABLE_THRESHOLD:
-        if time_since_change >= MIN_STABILIZE_SECONDS:
-            # Only decrease if temperature hasn't risen
-            if disk_temp <= _last_temp:
-                new_pwm = max(FAN_MIN, _stable_pwm - PWM_SEARCH_STEP)
-                if new_pwm != _stable_pwm:
-                    _stable_pwm = new_pwm
-                    _last_change_time = now
-    
+
+    if _tuning_locked:
+        _last_temp = disk_temp
+        return _stable_pwm
+
+    if _candidate_passed(now) and not _candidate_failed():
+        next_pwm = max(_pwm_floor, _stable_pwm - DECREASE_STEP)
+        if next_pwm != _stable_pwm and now >= _probe_due_at:
+            _stable_pwm = next_pwm
+            _last_change_time = now
+            _last_action = "decrease"
+            _start_candidate(_stable_pwm, now)
+
     _last_temp = disk_temp
     return _stable_pwm
 
-# Keep for backward compatibility
 FAN_STEP = PWM_SEARCH_STEP
 
 def set_pwm(val):
@@ -129,64 +179,17 @@ def ensure_manual_mode():
             pass
 
 def log_alerts(alerts):
-    """Print alerts with timestamp."""
     if not alerts:
         return
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     for alert in alerts:
-        print(f"[{ts}] {alert}")
-
-def test_scenarios():
-    """Non-destructive tests for PWM decision logic."""
-    global _stable_pwm, _last_temp, _last_change_time
-    _stable_pwm = None
-    _last_temp = 0
-    _last_change_time = 0
-    
-    all_ok = True
-    healthy = {"temp": 35, "thresholds": {"target": 42, "hard_limit": 50}, "health": "healthy", "alerts": []}
-    warm = {"temp": 44, "thresholds": {"target": 42, "hard_limit": 50}, "health": "healthy", "alerts": []}
-    hot = {"temp": 48, "thresholds": {"target": 42, "hard_limit": 50}, "health": "healthy", "alerts": []}
-    critical = {"temp": 55, "thresholds": {"target": 42, "hard_limit": 50}, "health": "healthy", "alerts": []}
-    cold = {"temp": 30, "thresholds": {"target": 42, "hard_limit": 50}, "health": "healthy", "alerts": []}
-    fallback = {"temp": 42, "thresholds": {"target": 42, "hard_limit": 50}, "health": "unknown", "alerts": []}
-
-    print("  Adaptive PWM tests:")
-    cases = [
-        ("cold",         30, cold,    FAN_MIN,  lambda p: p >= FAN_MIN),
-        ("at_target",    40, healthy, 80,       lambda p: p == 80),  # Starts at 80
-        ("warm_disk",    40, warm,    80,       lambda p: p > 80),   # Should increase
-        ("hot_disk",     40, hot,     80,       lambda p: p >= 100), # Should increase more
-        ("critical",     70, critical,80,       lambda p: p == FAN_MAX),
-        ("unavailable",  40, fallback,80,       lambda p: FAN_MIN <= p <= FAN_MAX),
-    ]
-
-    for name, core, disk, cur, check in cases:
-        _stable_pwm = None  # Reset for each test
-        new_pwm = compute_pwm(core, disk, cur)
-        ok = check(new_pwm)
-        if not ok:
-            all_ok = False
-        print(f"    [{'PASS' if ok else 'FAIL'}] {name}: {cur}→{new_pwm}")
-    
-    # Test stability: once at sweet spot, should hold
-    print("\n  Stability test:")
-    _stable_pwm = 120
-    _last_temp = 40
-    _last_change_time = 0  # Allow decrease
-    
-    # Cool disks - should try to decrease
-    pwm1 = compute_pwm(35, healthy, 120)
-    if pwm1 < 120:
-        print(f"    [PASS] Decreased from 120 to {pwm1} when cool")
-    else:
-        print(f"    [FAIL] Did not decrease: {pwm1}")
-        all_ok = False
-    
-    return all_ok
+        print(f"[{ts}] {alert}", flush=True)
 
 def main():
+    print("fan_control.py: starting main loop", flush=True)
+    iteration = 0
     while True:
+        iteration += 1
         try:
             ensure_manual_mode()
             core = get_core_temp()
@@ -195,9 +198,11 @@ def main():
             pwm = compute_pwm(core, disk, pwm)
             set_pwm(pwm)
             log_alerts(disk.get("alerts_all", []))
-        except Exception:
-            pass
+            if iteration % 6 == 0:
+                print(f"iter={iteration} core={core}C disk={disk["temp"]}C pwm={pwm} stable={_stable_pwm}", flush=True)
+        except Exception as e:
+            print(f"Error: {e}", flush=True)
         time.sleep(FAN_INTERVAL)
 
 if __name__ == "__main__":
-    test_scenarios()
+    main()
