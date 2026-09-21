@@ -26,6 +26,8 @@ CORE_TARGET = _CFG["CORE_TARGET"]
 CORE_CRITICAL = _CFG["CORE_CRITICAL"]
 DISK_TARGET = _CFG["DISK_TARGET"]
 DISK_HARD_LIMIT = _CFG["DISK_HARD_LIMIT"]
+DISK_RAMP_START = _CFG["DISK_RAMP_START"]
+DISK_RAMP_STEP = _CFG["DISK_RAMP_STEP"]
 
 PWM_SEARCH_STEP = 5
 PWM_STABLE_THRESHOLD = _CFG["PWM_STABLE_THRESHOLD"]
@@ -35,6 +37,10 @@ LEARN_FLOOR_BOOST = _CFG["LEARN_FLOOR_BOOST"]
 MIN_STABILIZE_SECONDS = _CFG["MIN_STABILIZE_SECONDS"]
 OBSERVATION_WINDOW = _CFG["OBSERVATION_WINDOW"]
 PROBE_INTERVAL = _CFG["PROBE_INTERVAL"]
+
+UNLOCK_THRESHOLD = _CFG["UNLOCK_THRESHOLD"]
+
+UNLOCK_THRESHOLD = _CFG["UNLOCK_THRESHOLD"]
 
 _stable_pwm = None
 _last_temp = 0
@@ -89,8 +95,9 @@ def _observe_candidate(disk_temp, now):
     if disk_temp > _candidate_max_temp:
         _candidate_max_temp = disk_temp
 
-def _candidate_passed(now):
-    return (now - _candidate_start) >= OBSERVATION_WINDOW
+def _candidate_passed(now, disk_temp):
+    required_window = 300 if disk_temp < DISK_RAMP_START else OBSERVATION_WINDOW
+    return (now - _candidate_start) >= required_window
 
 def _candidate_failed():
     return _candidate_max_temp > DISK_TARGET
@@ -144,10 +151,17 @@ def compute_pwm(core_temp, disk_info, current_pwm):
         return _stable_pwm
 
     if _tuning_locked:
+        if (disk_temp < DISK_TARGET - UNLOCK_THRESHOLD
+                and (now - _last_change_time) >= MIN_STABILIZE_SECONDS):
+            _tuning_locked = False
+            _pwm_floor = max(FAN_MIN, _stable_pwm - LEARN_FLOOR_BOOST)
+            _start_candidate(_stable_pwm, now)
+            _last_change_time = now
+            _last_action = "unlock"
         _last_temp = disk_temp
         return _stable_pwm
 
-    if _candidate_passed(now) and not _candidate_failed():
+    if _candidate_passed(now, disk_temp) and not _candidate_failed():
         next_pwm = max(_pwm_floor, _stable_pwm - DECREASE_STEP)
         if next_pwm != _stable_pwm and now >= _probe_due_at:
             _stable_pwm = next_pwm
@@ -157,8 +171,6 @@ def compute_pwm(core_temp, disk_info, current_pwm):
 
     _last_temp = disk_temp
     return _stable_pwm
-
-FAN_STEP = PWM_SEARCH_STEP
 
 def set_pwm(val):
     try:
